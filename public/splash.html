@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>K3 AI — Redirecting</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@700;900&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+  <style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; min-height: 100%; }
+    body { overflow: hidden; background: #050607; color: #c8e9d5; font-family: "Share Tech Mono", monospace; }
+    .splash { min-height: 100vh; position: relative; display: grid; place-items: center; overflow: hidden; isolation: isolate; }
+    .background, .scanlines, .grid, .particles { position: absolute; inset: 0; pointer-events: none; }
+    .background { z-index: -4; background: linear-gradient(135deg, rgba(0,20,30,.9), rgba(10,0,25,.94)), url("https://kimi-web-img.kimi.ai/img/as2.ftcdn.net/64fb4e4b9500708eb25b3f0bc1a44cca746d4cbe.jpg") center / cover; }
+    .scanlines { z-index: -3; opacity: .55; background: repeating-linear-gradient(0deg, transparent 0 3px, rgba(0,255,200,.1) 4px); animation: scan 8s linear infinite; }
+    .grid { z-index: -2; opacity: .5; background-image: linear-gradient(rgba(0,255,200,.05) 1px, transparent 1px), linear-gradient(90deg, rgba(0,255,200,.05) 1px, transparent 1px); background-size: 52px 52px; }
+    .top { position: absolute; inset: 0 0 auto; height: 3px; background: linear-gradient(90deg,#0ff,#f0f,#0f0,#0ff); background-size: 200%; animation: rainbow 3s linear infinite; }
+    .content { width: min(600px, calc(100% - 32px)); padding: 28px; text-align: center; }
+    .title { margin: 0 0 28px; color: #0f5; font: 700 13px Orbitron, sans-serif; letter-spacing: 6px; text-shadow: 0 0 12px #0f5; animation: flicker 2s infinite; }
+    h1 { position: relative; margin: 0 0 8px; color: #0ff; font: 900 52px Orbitron, sans-serif; letter-spacing: 5px; text-shadow: 0 0 16px #0ff, 0 0 35px #0ff; animation: skew 3s infinite alternate; }
+    h1::before, h1::after { content: attr(data-text); position: absolute; inset: 0; color: #0ff; pointer-events: none; }
+    h1::before { left: 3px; color: #f0f; clip-path: inset(20px 0 25px); animation: glitch 2s infinite; }
+    h1::after { left: -3px; color: #0ff; clip-path: inset(45px 0 10px); animation: glitch 2.5s infinite reverse; }
+    .subtitle { margin: 0 0 42px; color: #f0f; font-size: 11px; letter-spacing: 5px; text-transform: uppercase; text-shadow: 0 0 8px #f0f; }
+    .status { padding: 18px 25px; text-align: left; background: rgba(3,8,14,.7); border: 1px solid rgba(0,255,255,.35); box-shadow: 0 0 24px rgba(0,255,255,.1), inset 0 0 18px rgba(0,255,255,.04); }
+    .status p { margin: 0 0 9px; color: rgba(0,255,255,.8); font-size: 12px; letter-spacing: 1px; }
+    .status p:last-child { margin-bottom: 0; }
+    .green { color: #0f0; text-shadow: 0 0 7px #0f0; } .cyan { color: #0ff; text-shadow: 0 0 7px #0ff; } .magenta { color: #f0f; text-shadow: 0 0 7px #f0f; }
+    .progress { margin: 28px 0; text-align: left; }
+    .label { display: flex; justify-content: space-between; margin-bottom: 8px; color: rgba(0,255,255,.65); font-size: 10px; letter-spacing: 3px; text-transform: uppercase; }
+    .track { height: 4px; background: rgba(0,255,255,.12); } .fill { height: 100%; width: 0; background: linear-gradient(90deg,#0ff,#f0f,#0f0); box-shadow: 0 0 12px #0ff; transition: width 1s linear; }
+    .route, .terminal { margin: 18px 0 0; color: rgba(0,255,255,.5); font-size: 10px; letter-spacing: 2px; } .route span { color: #f0f; }
+    .terminal { height: 14px; overflow: hidden; color: rgba(0,255,255,.55); letter-spacing: 1px; } .cursor { display: inline-block; width: 8px; height: 12px; margin-left: 3px; vertical-align: middle; background: #0ff; animation: blink .8s infinite; }
+    footer { position: absolute; bottom: 18px; color: rgba(0,255,255,.3); font-size: 9px; letter-spacing: 2px; }
+    .particle { position: absolute; bottom: -5px; width: 2px; height: 2px; border-radius: 50%; background: #0ff; box-shadow: 0 0 8px #0ff; animation: float linear infinite; }
+    @keyframes scan { to { transform: translateY(4px); } } @keyframes rainbow { to { background-position: 200%; } } @keyframes float { to { transform: translateY(-110vh); opacity: 0; } } @keyframes blink { 50% { opacity: 0; } } @keyframes flicker { 50% { opacity: .5; } 54% { opacity: 1; } } @keyframes skew { 50% { transform: skew(1deg); } } @keyframes glitch { 20% { clip-path: inset(55px 0 8px); } 60% { clip-path: inset(8px 0 48px); } }
+    @media (max-width: 480px) { h1 { font-size: 36px; letter-spacing: 3px; } .title { font-size: 10px; letter-spacing: 3px; } .subtitle { letter-spacing: 3px; } .content { padding: 14px; } }
+  </style>
+</head>
+<body>
+  <main class="splash" aria-live="polite">
+    <div class="top"></div><div class="background"></div><div class="scanlines"></div><div class="grid"></div><div class="particles" id="particles"></div>
+    <section class="content">
+      <p class="title">AUTHENTICATION ACCEPTED</p>
+      <h1 data-text="K3_AI">K3_AI</h1>
+      <p class="subtitle">Cyber Intelligence Assistant</p>
+      <div class="status">
+        <p><span class="green">✓</span> Secure tunnel established</p>
+        <p><span class="cyan">►</span> Preparing operator dashboard...</p>
+        <p><span class="magenta">◈</span> Route: <span class="cyan">F34RD0WN!</span></p>
+      </div>
+      <div class="progress">
+        <div class="label"><span>Redirecting</span><span id="seconds">7s</span></div>
+        <div class="track"><div class="fill" id="fill"></div></div>
+      </div>
+      <p class="route">KOTA: <span>SUKABUMI</span> // UPLINK: <span>ENCRYPTED</span></p>
+      <p class="terminal"><span id="terminal"></span><span class="cursor"></span></p>
+    </section>
+    <footer>SECURE CONNECTION // ENCRYPTED // v2.0.7</footer>
+  </main>
+  <script>
+    const requestedDestination = new URLSearchParams(window.location.search).get("next");
+    const destination = requestedDestination?.startsWith("/") && !requestedDestination.startsWith("//")
+      ? requestedDestination
+      : "/chat";
+    const phrases = ["Antosan Sakedap...", "Sek Yo Mass...", "Wait me for Second...", "OK...", "Let's GOOOOOO !!!..."];
+    const seconds = document.getElementById("seconds"), fill = document.getElementById("fill"), terminal = document.getElementById("terminal");
+    for (let i = 0; i < 30; i++) { const p = document.createElement("i"); p.className = "particle"; p.style.left = Math.random() * 100 + "%"; p.style.animationDuration = 5 + Math.random() * 10 + "s"; p.style.animationDelay = Math.random() * 5 + "s"; document.getElementById("particles").appendChild(p); }
+    let left = 7, phrase = 0, index = 0, deleting = false;
+    function type() { const text = phrases[phrase]; index += deleting ? -1 : 1; terminal.textContent = text.slice(0, index); if (!deleting && index === text.length) deleting = true; else if (deleting && index === 0) { deleting = false; phrase = (phrase + 1) % phrases.length; } setTimeout(type, !deleting && index === text.length ? 1200 : deleting ? 35 : 65); }
+    type();
+    const timer = setInterval(() => { left--; seconds.textContent = left > 0 ? left + "s" : "COMPLETE"; fill.style.width = ((7 - left) / 7 * 100) + "%"; if (left <= 0) { clearInterval(timer); fill.style.width = "100%"; window.location.replace(destination); } }, 1000);
+  </script>
+</body>
+</html>
