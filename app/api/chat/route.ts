@@ -14,7 +14,7 @@ import { checkRateLimit, clientKey } from "@/lib/utils/ratelimit";
 import { isNonEmptyString, isValidId, LIMITS } from "@/lib/utils/validation";
 import { logger } from "@/lib/utils/logger";
 import { appendStreamText, repairRepeatedTokens } from "@/lib/chat/text";
-import type { ResponseStyle } from "@/types/message";
+import type { ChatMessage, ResponseStyle } from "@/types/message";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -44,35 +44,8 @@ interface RequestBody {
   attachmentIds?: string[];
 }
 
-interface ChatMessage {
-  id: string;
-  role: string;
-  content: string;
-}
-
-interface SearchResult {
-  title: string;
-  url: string;
-  source: string;
-  snippet: string;
-}
-
-interface SocialAccount {
-  platform: string;
-  username: string;
-  url: string;
-  source: string;
-}
-
-interface EntityLookupResult {
-  query: string;
-  type: string;
-  generatedAt: string;
-  summary: string;
-  results: SearchResult[];
-  evidence: { emails?: string[]; phones?: string[]; domains?: string[] };
-  filename: string;
-}
+// HAPUS interface ChatMessage lokal yang duplikat
+// Gunakan import dari @/types/message saja
 
 const PERSONA = (process.env.PERSONA || "").trim();
 
@@ -137,7 +110,7 @@ function stripHtml(value: string): string {
     .trim();
 }
 
-// SECURITY: Removed Google scraping (violates ToS). Using DuckDuckGo HTML version.
+// DuckDuckGo Search (GitHub-safe, no ToS violation)
 async function fetchWithTimeout(
   url: string,
   options: RequestInit = {},
@@ -152,6 +125,13 @@ async function fetchWithTimeout(
   }
 }
 
+interface SearchResult {
+  title: string;
+  url: string;
+  source: string;
+  snippet: string;
+}
+
 async function searchDuckDuckGo(query: string): Promise<SearchResult[]> {
   const results: SearchResult[] = [];
   const seen = new Set<string>();
@@ -161,7 +141,7 @@ async function searchDuckDuckGo(query: string): Promise<SearchResult[]> {
       `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`,
       {
         headers: {
-          "User-Agent": "Mozilla/5.0 (compatible; OSINTBot/1.0; +https://example.com/bot)",
+          "User-Agent": "Mozilla/5.0 (compatible; OSINTBot/1.0)",
           Accept: "text/html",
         },
       }
@@ -170,8 +150,6 @@ async function searchDuckDuckGo(query: string): Promise<SearchResult[]> {
     if (!response.ok) return results;
 
     const html = await response.text();
-    
-    // DuckDuckGo HTML parsing
     const linkMatches = html.matchAll(/<a[^>]+class="result__a"[^>]+href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi);
     const snippetMatches = html.matchAll(/<a[^>]+class="result__snippet"[^>]*>([\s\S]*?)<\/a>/gi);
     
@@ -207,13 +185,13 @@ async function searchDuckDuckGo(query: string): Promise<SearchResult[]> {
       index++;
     }
   } catch (error) {
-    logger.warn("chat", `DuckDuckGo search failed: ${error instanceof Error ? error.message : String(error)}`);
+    logger.warn("chat", `Search failed: ${error instanceof Error ? error.message : String(error)}`);
   }
   
   return results;
 }
 
-// Command parsers
+// Command parser
 function parseCommand(content: string, command: string): string | null {
   const patterns = [
     new RegExp(`^\\/${command}\\s+"([^"]+)"$`, "i"),
@@ -233,6 +211,55 @@ function isHelpCommand(content: string): boolean {
 }
 
 // OSINT Functions
+interface SocialAccount {
+  platform: string;
+  username: string;
+  url: string;
+  source: string;
+}
+
+async function runSocialOsintLookup(query: string): Promise<SocialAccount[]> {
+  const cleanedQuery = query.trim();
+  const platforms = ["instagram", "facebook", "twitter", "linkedin", "github", "gitlab"];
+  const accountsMap = new Map<string, SocialAccount>();
+
+  await Promise.all(
+    platforms.map(async (platform) => {
+      const results = await searchDuckDuckGo(`${cleanedQuery} ${platform}`);
+      
+      for (const item of results) {
+        try {
+          const parsed = new URL(item.url);
+          const hostname = parsed.hostname.replace(/^www\./, "");
+          
+          if (!hostname.includes(platform)) continue;
+          
+          const path = parsed.pathname.replace(/^\/+|\/+$/g, "");
+          if (!path) continue;
+          
+          const segments = path.split("/").filter(Boolean);
+          const username = segments[0];
+          if (!username || username.length < 2) continue;
+          
+          const key = `${platform}:${username.toLowerCase()}`;
+          if (accountsMap.has(key)) continue;
+          
+          accountsMap.set(key, {
+            platform,
+            username,
+            url: item.url,
+            source: hostname,
+          });
+        } catch {
+          continue;
+        }
+      }
+    })
+  );
+
+  return [...accountsMap.values()].slice(0, 20);
+}
+
 async function runWhoisLookup(query: string) {
   const cleanedQuery = query.trim();
   const searchTerms = [
@@ -255,7 +282,6 @@ async function runWhoisLookup(query: string) {
     })
   );
 
-  // Social media lookup
   const socialAccounts = await runSocialOsintLookup(cleanedQuery).catch(() => []);
   
   const domains = [...new Set(allResults.map(r => r.source).filter(s => s && !s.includes("duckduckgo")))].slice(0, 20);
@@ -290,48 +316,14 @@ async function runWhoisLookup(query: string) {
   };
 }
 
-async function runSocialOsintLookup(query: string): Promise<SocialAccount[]> {
-  const cleanedQuery = query.trim();
-  const platforms = ["instagram", "facebook", "twitter", "linkedin", "github", "gitlab"];
-  const accountsMap = new Map<string, SocialAccount>();
-
-  await Promise.all(
-    platforms.map(async (platform) => {
-      const results = await searchDuckDuckGo(`${cleanedQuery} ${platform}`);
-      
-      for (const item of results) {
-        try {
-          const parsed = new URL(item.url);
-          const hostname = parsed.hostname.replace(/^www\./, "");
-          
-          // Check if URL matches platform
-          if (!hostname.includes(platform)) continue;
-          
-          // Extract username from path
-          const path = parsed.pathname.replace(/^\/+|\/+$/g, "");
-          if (!path) continue;
-          
-          const segments = path.split("/").filter(Boolean);
-          const username = segments[0];
-          if (!username || username.length < 2) continue;
-          
-          const key = `${platform}:${username.toLowerCase()}`;
-          if (accountsMap.has(key)) continue;
-          
-          accountsMap.set(key, {
-            platform,
-            username,
-            url: item.url,
-            source: hostname,
-          });
-        } catch {
-          continue;
-        }
-      }
-    })
-  );
-
-  return [...accountsMap.values()].slice(0, 20);
+interface EntityLookupResult {
+  query: string;
+  type: string;
+  generatedAt: string;
+  summary: string;
+  results: SearchResult[];
+  evidence: { emails?: string[]; phones?: string[]; domains?: string[] };
+  filename: string;
 }
 
 async function runEntityLookup(
@@ -409,14 +401,14 @@ export async function POST(req: NextRequest) {
   }
 
   // Initialize variables
-  let conversationId: string | undefined;
+  let conversationId: string;
   let isNewConversation = false;
   let content = "";
   let model = MODELS[0]?.id || "default";
   let responseStyle: ResponseStyle = "balanced";
   let attachmentIds: string[] | undefined;
   let enriched: string | undefined;
-  let userMessage: ChatMessage | undefined;
+  let userMessage: ChatMessage;
   const isWormgemmaRequest = Array.isArray(body?.contents);
 
   // Parse request (WormGemma format or standard)
@@ -446,7 +438,8 @@ export async function POST(req: NextRequest) {
       isNewConversation = true;
     }
 
-    userMessage = makeMessage({ conversationId, role: "user", content }) as ChatMessage;
+    // FIX: Gunakan makeMessage dengan tipe yang benar, jangan pakai 'as ChatMessage' jika tidak perlu
+    userMessage = makeMessage({ conversationId, role: "user", content });
     appendMessage(userMessage);
     enriched = content;
   } else {
@@ -460,21 +453,24 @@ export async function POST(req: NextRequest) {
       ? body.responseStyle 
       : "balanced";
     
-    conversationId = body.conversationId;
-    if (conversationId && isValidId(conversationId) && getConversation(clientId, conversationId)) {
-      // Existing conversation
+    // FIX: Pastikan conversationId selalu terdefinisi
+    const requestedConvId = body.conversationId;
+    if (requestedConvId && isValidId(requestedConvId) && getConversation(clientId, requestedConvId)) {
+      conversationId = requestedConvId;
     } else {
       conversationId = createConversation(clientId, titleFromFirstMessage(content)).id;
       isNewConversation = true;
     }
 
     attachmentIds = Array.isArray(body.attachmentIds) ? body.attachmentIds : undefined;
+    
+    // FIX: Buat message dengan tipe yang sesuai
     userMessage = makeMessage({
       conversationId,
       role: "user",
       content,
       attachments: attachmentIds?.length ? attachmentIds.map(id => ({ id, name: "attachment", size: 0, mime: "" })) : undefined,
-    }) as ChatMessage;
+    });
     
     appendMessage(userMessage);
     enriched = content;
@@ -509,13 +505,13 @@ export async function POST(req: NextRequest) {
     ].join("\n");
 
     const assistantMessage = makeMessage({
-      conversationId: conversationId as string,
+      conversationId,
       role: "assistant",
       content: helpText,
       model: "help-command",
     });
     appendMessage(assistantMessage);
-    touchConversation(clientId, conversationId as string, {
+    touchConversation(clientId, conversationId, {
       preview: "HELP COMMANDS",
       deltaMessages: 2,
       title: isNewConversation ? titleFromFirstMessage(content) : undefined,
@@ -526,8 +522,8 @@ export async function POST(req: NextRequest) {
       headers: {
         "Content-Type": "text/plain; charset=utf-8",
         "Cache-Control": "no-store",
-        "X-Conversation-Id": conversationId as string,
-        "X-User-Message-Id": userMessage?.id ?? "",
+        "X-Conversation-Id": conversationId,
+        "X-User-Message-Id": userMessage.id,
         "X-Provider": "help-command",
       },
     });
@@ -554,13 +550,13 @@ export async function POST(req: NextRequest) {
     ].join("\n");
 
     const assistantMessage = makeMessage({
-      conversationId: conversationId as string,
+      conversationId,
       role: "assistant",
       content: whoisText,
       model: "whois-osint",
     });
     appendMessage(assistantMessage);
-    touchConversation(clientId, conversationId as string, {
+    touchConversation(clientId, conversationId, {
       preview: `WHOIS ${lookup.query}`,
       deltaMessages: 2,
       title: isNewConversation ? titleFromFirstMessage(content) : undefined,
@@ -571,8 +567,8 @@ export async function POST(req: NextRequest) {
       headers: {
         "Content-Type": "text/plain; charset=utf-8",
         "Cache-Control": "no-store",
-        "X-Conversation-Id": conversationId as string,
-        "X-User-Message-Id": userMessage?.id ?? "",
+        "X-Conversation-Id": conversationId,
+        "X-User-Message-Id": userMessage.id,
         "X-File-Name": lookup.nama_file,
         "X-Provider": "whois-osint",
       },
@@ -595,13 +591,13 @@ export async function POST(req: NextRequest) {
 
     const json = JSON.stringify(result, null, 2);
     const assistantMessage = makeMessage({
-      conversationId: conversationId as string,
+      conversationId,
       role: "assistant",
       content: json,
       model: "social-osint",
     });
     appendMessage(assistantMessage);
-    touchConversation(clientId, conversationId as string, {
+    touchConversation(clientId, conversationId, {
       preview: `OSINT ${socialQuery}`,
       deltaMessages: 2,
       title: isNewConversation ? titleFromFirstMessage(content) : undefined,
@@ -612,8 +608,8 @@ export async function POST(req: NextRequest) {
       headers: {
         "Content-Type": "application/json; charset=utf-8",
         "Cache-Control": "no-store",
-        "X-Conversation-Id": conversationId as string,
-        "X-User-Message-Id": userMessage?.id ?? "",
+        "X-Conversation-Id": conversationId,
+        "X-User-Message-Id": userMessage.id,
         "X-File-Name": result.filename,
         "X-Provider": "social-osint",
       },
@@ -630,13 +626,13 @@ export async function POST(req: NextRequest) {
     const json = JSON.stringify(lookup, null, 2);
     
     const assistantMessage = makeMessage({
-      conversationId: conversationId as string,
+      conversationId,
       role: "assistant",
       content: json,
       model: `${cmd}-intel`,
     });
     appendMessage(assistantMessage);
-    touchConversation(clientId, conversationId as string, {
+    touchConversation(clientId, conversationId, {
       preview: `${cmd.toUpperCase()} ${lookup.query}`,
       deltaMessages: 2,
       title: isNewConversation ? titleFromFirstMessage(content) : undefined,
@@ -647,8 +643,8 @@ export async function POST(req: NextRequest) {
       headers: {
         "Content-Type": "application/json; charset=utf-8",
         "Cache-Control": "no-store",
-        "X-Conversation-Id": conversationId as string,
-        "X-User-Message-Id": userMessage?.id ?? "",
+        "X-Conversation-Id": conversationId,
+        "X-User-Message-Id": userMessage.id,
         "X-File-Name": lookup.filename,
         "X-Provider": `${cmd}-intel`,
       },
@@ -658,7 +654,10 @@ export async function POST(req: NextRequest) {
   // Standard AI chat flow (OpenAI / Fallback)
   const keysString = process.env.OPENAI_API_KEYS || process.env.OPENAI_API_KEY || "";
   const apiKeys = keysString.split(",").map(k => k.trim()).filter(Boolean);
-  const OPENAI_MODEL = process.env.OPENAI_MODEL || "gemini/gemini-3.5-flash-lite";
+  
+  // Konfigurasi untuk SumoPod/OpenAI
+  const OPENAI_BASE_URL = process.env.OPENAI_API_BASE || "https://api.openai.com/v1";
+  const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4o-mini";
 
   let messagesForProvider: ProviderMessage[] = [];
 
@@ -666,7 +665,7 @@ export async function POST(req: NextRequest) {
     if (isWormgemmaRequest && body.contents) {
       messagesForProvider = normalizeContents(body.contents);
     } else {
-      const history = getMessages(conversationId as string);
+      const history = getMessages(conversationId);
       const contextMessages = buildContext({ history, responseStyle });
       
       messagesForProvider = contextMessages
@@ -691,7 +690,7 @@ export async function POST(req: NextRequest) {
     for (let attempt = 0; attempt < apiKeys.length; attempt++) {
       const apiKey = apiKeys[attempt];
       try {
-        const response = await fetch("https://api.openai.com/v1/chat/completions", {
+        const response = await fetch(`${OPENAI_BASE_URL}/chat/completions`, {
           method: "POST",
           headers: {
             Authorization: `Bearer ${apiKey}`,
@@ -716,7 +715,7 @@ export async function POST(req: NextRequest) {
         }
 
         const responseBodyStream = response.body;
-        if (!responseBodyStream) throw new Error("OpenAI response body is null");
+        if (!responseBodyStream) throw new Error("Response body is null");
 
         const encoder = new TextEncoder();
         const decoder = new TextDecoder();
@@ -765,13 +764,13 @@ export async function POST(req: NextRequest) {
               
               if (fullAssistantContent.trim()) {
                 const assistantMessage = makeMessage({
-                  conversationId: conversationId as string,
+                  conversationId,
                   role: "assistant",
                   content: fullAssistantContent,
                   model: OPENAI_MODEL,
                 });
                 appendMessage(assistantMessage);
-                touchConversation(clientId, conversationId as string, {
+                touchConversation(clientId, conversationId, {
                   preview: fullAssistantContent.slice(0, 100),
                   deltaMessages: 2,
                   title: isNewConversation ? titleFromFirstMessage(content) : undefined,
@@ -787,14 +786,14 @@ export async function POST(req: NextRequest) {
           headers: {
             "Content-Type": "text/plain; charset=utf-8",
             "Cache-Control": "no-store",
-            "X-Conversation-Id": conversationId as string,
-            "X-User-Message-Id": userMessage?.id ?? "",
+            "X-Conversation-Id": conversationId,
+            "X-User-Message-Id": userMessage.id,
             "X-Provider": "openai",
             "X-Model": OPENAI_MODEL,
           },
         });
       } catch (error) {
-        logger.error("chat", `OpenAI attempt ${attempt + 1} exception: ${error instanceof Error ? error.message : String(error)}`);
+        logger.error("chat", `Attempt ${attempt + 1} exception: ${error instanceof Error ? error.message : String(error)}`);
         if (attempt === apiKeys.length - 1) break;
       }
     }
@@ -817,8 +816,8 @@ export async function POST(req: NextRequest) {
         headers: {
           "Content-Type": "text/plain; charset=utf-8",
           "Cache-Control": "no-store",
-          "X-Conversation-Id": conversationId as string,
-          "X-User-Message-Id": userMessage?.id ?? "",
+          "X-Conversation-Id": conversationId,
+          "X-User-Message-Id": userMessage.id,
           "X-Provider": "local-provider",
         },
       });
