@@ -174,8 +174,9 @@ export async function POST(req: NextRequest) {
   const openAiModel = process.env.OPENAI_MODEL || "gpt-4o-mini";
 
   for (let attempt = 0; attempt < keys.length; attempt++) {
+    let upstream: Response;
     try {
-      const upstream = await fetch("https://api.openai.com/v1/chat/completions", {
+      upstream = await fetch("https://api.openai.com/v1/chat/completions", {
         method: "POST",
         headers: {
           Authorization: `Bearer ${keys[attempt]}`,
@@ -183,95 +184,152 @@ export async function POST(req: NextRequest) {
         },
         body: JSON.stringify({ model: openAiModel, messages, stream: true, temperature: 0.7 }),
       });
+    } catch (error) {
+      logger.warn("chat", `OpenAI request failed: ${error instanceof Error ? error.message : String(error)}`);
+      continue;
+    }
 
-      if (!upstream.ok) {
-        const detail = await upstream.text();
-        logger.warn("chat", `OpenAI request failed [${upstream.status}]: ${detail.slice(0, 1000)}`);
-        if ([401, 403, 429].includes(upstream.status) && attempt < keys.length - 1) continue;
-        break;
-      }
-      if (!upstream.body) throw new Error("OpenAI response body is empty");
+    if (!upstream.ok) {
+      const detail = await upstream.text().catch(() => "");
+      logger.warn("chat", `OpenAI request failed [${upstream.status}]: ${detail.slice(0, 1000)}`);
+      // Retry a different key only for authentication, rate-limit, and server errors.
+      if ([401, 403, 429].includes(upstream.status) || upstream.status >= 500) continue;
+      break;
+    }
+    if (!upstream.body) {
+      logger.warn("chat", "OpenAI response body is empty");
+      continue;
+    }
 
-      const reader = upstream.body.getReader();
-      const decoder = new TextDecoder();
-      const encoder = new TextEncoder();
-      let assistantContent = "";
-      let buffer = "";
+    const reader = upstream.body.getReader();
+    const decoder = new TextDecoder();
+    const encoder = new TextEncoder();
+    let assistantContent = "";
+    let buffer = "";
+    let saved = false;
 
-      const stream = new ReadableStream<Uint8Array>({
-        async pull(controller) {
-          try {
-            while (true) {
-              const { done, value } = await reader.read();
-              if (done) {
-                buffer += decoder.decode();
-                const remaining = buffer.split("\n");
-                for (const line of remaining) {
-                  const delta = parseDelta(line);
-                  if (delta) {
-                    const clean = repairRepeatedTokens(assistantContent, delta);
-                    assistantContent = appendStreamText(assistantContent, clean);
-                    controller.enqueue(encoder.encode(clean));
-                  }
-                }
-                if (assistantContent.trim()) {
-                  appendMessage(makeMessage({
-                    conversationId: conversation.id,
-                    role: "assistant",
-                    content: assistantContent,
-                    model: openAiModel,
-                  }));
-                  touchConversation(clientId, conversation.id, {
-                    preview: assistantContent.slice(0, 100),
-                    deltaMessages: 2,
-                    title: conversation.isNew ? titleFromFirstMessage(content) : undefined,
-                  });
-                }
-                controller.close();
-                return;
-              }
+    const saveAssistantMessage = () => {
+      if (saved || !assistantContent.trim()) return;
+      saved = true;
+      appendMessage(makeMessage({
+        conversationId: conversation.id,
+        role: "assistant",
+        content: assistantContent,
+        model: openAiModel,
+      }));
+      touchConversation(clientId, conversation.id, {
+        preview: assistantContent.slice(0, 100),
+        deltaMessages: 2,
+        title: conversation.isNew ? titleFromFirstMessage(content) : undefined,
+      });
+    };
 
-              buffer += decoder.decode(value, { stream: true });
-              const lines = buffer.split("\n");
-              buffer = lines.pop() || "";
-              for (const line of lines) {
+    const stream = new ReadableStream<Uint8Array>({
+      async pull(controller) {
+        try {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) {
+              buffer += decoder.decode();
+              const remaining = buffer.split("\n");
+              for (const line of remaining) {
                 const delta = parseDelta(line);
-                if (!delta) continue;
-                const clean = repairRepeatedTokens(assistantContent, delta);
-                assistantContent = appendStreamText(assistantContent, clean);
-                controller.enqueue(encoder.encode(clean));
+                if (delta) {
+                  assistantContent = appendStreamText(assistantContent, delta);
+                  controller.enqueue(encoder.encode(delta));
+                }
               }
-              if (lines.length > 0) return;
+              saveAssistantMessage();
+              controller.close();
+              return;
             }
-          } catch (error) {
-            logger.error("chat", `OpenAI stream failed: ${error instanceof Error ? error.message : String(error)}`);
-            await reader.cancel().catch(() => undefined);
+
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split("\n");
+            buffer = lines.pop() || "";
+            for (const line of lines) {
+              const delta = parseDelta(line);
+              if (!delta) continue;
+              assistantContent = appendStreamText(assistantContent, delta);
+              controller.enqueue(encoder.encode(delta));
+            }
+            if (lines.length > 0) return;
+          }
+        } catch (error) {
+          logger.error("chat", `OpenAI stream failed: ${error instanceof Error ? error.message : String(error)}`);
+          await reader.cancel().catch(() => undefined);
+          try {
+            saveAssistantMessage();
+            controller.error(error);
+          } catch (saveError) {
+            logger.error("chat", `Failed to save partial response: ${saveError instanceof Error ? saveError.message : String(saveError)}`);
             controller.error(error);
           }
-        },
-        async cancel() {
-          await reader.cancel().catch(() => undefined);
-        },
-      });
+        }
+      },
+      async cancel() {
+        await reader.cancel().catch(() => undefined);
+      },
+    });
 
-      return new Response(stream, {
-        headers: {
-          ...responseHeaders(conversation.id, userMessage.id, "openai"),
-          "X-Model": openAiModel,
-        },
-      });
-    } catch (error) {
-      logger.error("chat", `OpenAI attempt ${attempt + 1} failed: ${error instanceof Error ? error.message : String(error)}`);
-    }
+    return new Response(stream, {
+      headers: {
+        ...responseHeaders(conversation.id, userMessage.id, "openai"),
+        "X-Model": openAiModel,
+      },
+    });
   }
 
   try {
     const provider = getProvider();
-    const fallbackMessages = messages.length ? messages : addPersona([{ role: "user", content }]);
-    const stream = await provider.streamChat({
-      model: isNonEmptyString(body.model, 64) ? body.model : MODELS[0]?.id || "default",
-      messages: fallbackMessages,
+    const model = isNonEmptyString(body.model, 64) ? body.model : MODELS[0]?.id || "default";
+    const upstreamStream = await provider.streamChat({ model, messages });
+    const reader = upstreamStream.getReader();
+    const decoder = new TextDecoder();
+    const encoder = new TextEncoder();
+    let assistantContent = "";
+    let saved = false;
+
+    const saveAssistantMessage = () => {
+      if (saved || !assistantContent.trim()) return;
+      saved = true;
+      appendMessage(makeMessage({
+        conversationId: conversation.id,
+        role: "assistant",
+        content: assistantContent,
+        model,
+      }));
+      touchConversation(clientId, conversation.id, {
+        preview: assistantContent.slice(0, 100),
+        deltaMessages: 2,
+        title: conversation.isNew ? titleFromFirstMessage(content) : undefined,
+      });
+    };
+
+    const stream = new ReadableStream<Uint8Array>({
+      async pull(controller) {
+        try {
+          const { done, value } = await reader.read();
+          if (done) {
+            saveAssistantMessage();
+            controller.close();
+            return;
+          }
+          const chunk = decoder.decode(value, { stream: true });
+          assistantContent = appendStreamText(assistantContent, chunk);
+          controller.enqueue(encoder.encode(chunk));
+        } catch (error) {
+          logger.error("chat", `Fallback stream failed: ${error instanceof Error ? error.message : String(error)}`);
+          await reader.cancel().catch(() => undefined);
+          saveAssistantMessage();
+          controller.error(error);
+        }
+      },
+      async cancel() {
+        await reader.cancel().catch(() => undefined);
+      },
     });
+
     return new Response(stream, {
       headers: responseHeaders(conversation.id, userMessage.id, provider.id),
     });
