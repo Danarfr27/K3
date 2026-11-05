@@ -1,57 +1,6 @@
-// ------------------------------------------------------------
-  // OpenAI API configuration
-  // ------------------------------------------------------------
-
-  const keysString =
-    process.env.OPENAI_API_KEYS ||
-    process.env.OPENAI_API_KEY ||
-    "";
-
-  const apiKeys = keysString
-    .split(",")
-    .map((key) => key.trim())
-    .filter(Boolean);
-
-  const OPENAI_MODEL =
-    process.env.OPENAI_MODEL ||
-    "gpt-4o-mini";
-
-  if (apiKeys.length > 0) {
-    let messagesForProvider: ProviderMessage[] = [];
-
-    if (isWormgemmaRequest) {
-      messagesForProvider = normalizeContents(body.contents);
-    } else {
-      const history = getMessages(conversationId!);
-
-      const contextMessages = buildContext({
-        history,
-        responseStyle,
-      });
-
-      messagesForProvider = contextMessages
-        .slice(-LIMITS.MAX_MESSAGES_PER_REQUEST)
-        .map((message) => ({
-          role:
-            message.role === "system" ||
-            message.role === "user" ||
-            message.role === "assistant"
-              ? message.role
-              : "user",
-          content: message.content,
-        }));
-
-      // Set user prompt terbaru jika ada lampiran berkas
-      if (
-        enriched !== undefined &&
-        enriched !== content &&
-        messagesForProvider.length > 0
-      ) {
-        for (let i = messagesForProvider.length - 1; i >= 0; i--) {
-          if (messagesForProvider[i].role === "user") {
-            messagesForProvider[i].content = enriched;
-            break;
-          }
+if (messagesForProvider[i].role === "user") {
+          messagesForProvider[i].content = enriched;
+          break;
         }
       }
     }
