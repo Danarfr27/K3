@@ -657,7 +657,7 @@ export async function POST(req: NextRequest) {
   
   // Konfigurasi untuk SumoPod/OpenAI
   const OPENAI_BASE_URL = process.env.OPENAI_API_BASE || "https://api.openai.com/v1";
-  const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4o-mini";
+  const OPENAI_MODEL = process.env.OPENAI_MODEL || "gemini/gemini-3.5-flash-lite";
 
   let messagesForProvider: ProviderMessage[] = [];
 
