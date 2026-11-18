@@ -22,10 +22,10 @@ export interface AIProvider {
 class OpenRouterProvider implements AIProvider {
   readonly id = "openrouter";
 
-  constructor(private apiKeys: string[], private defaultModel: string) {}
+  constructor(private apiKeys: string[], private defaultModel: string, private baseUrl: string = "https://openrouter.ai/api/v1") {}
 
   private endpoint() {
-    return `https://openrouter.ai/api/v1/chat/completions`;
+    return `${this.baseUrl.replace(/\/+$/, "")}/chat/completions`;
   }
 
   private async tryFetch(key: string, body: any, stream = false) {
@@ -122,16 +122,16 @@ class OpenRouterProvider implements AIProvider {
   }
 
   async generateImage(prompt: string): Promise<string> {
-    const imageBase = process.env.IMAGE_BASE_URL || "https://openrouter.ai";
+    const imageBase = process.env.IMAGE_BASE_URL || this.baseUrl;
     const key = this.apiKeys[0];
-    if (!key) throw new Error("OpenRouter image provider is not configured");
+    if (!key) return proceduralImage(prompt);
     const imageModel = process.env.IMAGE_MODEL || "dall-e-3";
     try {
       const res = await fetch(`${imageBase.replace(/\/+$/, "")}/images/generations`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${key}`,
+          Authorization: "Bearer " + key,
         },
         body: JSON.stringify({ model: imageModel, prompt, n: 1, size: "1024x1024" }),
       });
@@ -142,7 +142,9 @@ class OpenRouterProvider implements AIProvider {
       if (first?.b64_json) return `data:image/png;base64,${first.b64_json}`;
       throw new Error("OpenRouter image provider returned no image");
     } catch (e) {
-      throw e;
+      // No remote image provider available: deterministic local SVG fallback.
+      logger.warn("ai", `remote image generation failed (${e instanceof Error ? e.message : String(e)}), using procedural image`);
+      return proceduralImage(prompt);
     }
   }
 }
@@ -164,14 +166,23 @@ export function getProvider(): AIProvider {
     return cached;
   }
 
-  throw new Error("OpenRouter is not configured. Set OPENROUTER_API_KEY or OPENROUTER_API_KEYS.");
+  // Fall back to Google Gemini (OpenAI-compatible endpoint) when GEMINI_API_KEY is set
+  const geminiKey = (process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || "").trim();
+  if (geminiKey) {
+    const model = process.env.GEMINI_MODEL || "gemini-2.0-flash";
+    logger.info("ai", `provider=gemini model=${model}`);
+    cached = new OpenRouterProvider([geminiKey], model, "https://generativelanguage.googleapis.com/v1beta/openai");
+    return cached;
+  }
+
+  throw new Error("AI provider is not configured. Set OPENROUTER_API_KEY or GEMINI_API_KEY.");
 }
 
 /** True when a real AI provider is configured. */
 export function isRealProvider(): boolean {
-  // Treat OpenRouter env as a real provider too
   const or = Boolean(process.env.OPENROUTER_API_KEYS || process.env.OPENROUTER_API_KEY);
-  return or;
+  const gemini = Boolean(process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY);
+  return or || gemini;
 }
 
 /* ------------------------------------------------------------

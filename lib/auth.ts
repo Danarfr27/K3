@@ -1,7 +1,7 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 
 export const AUTH_COOKIE = "k3_auth";
-export const MAX_ACCOUNTS = 100;
+export const MAX_ACCOUNTS = 500;
 const SESSION_VALUE = "authenticated";
 
 function secret(): string {

@@ -92,7 +92,7 @@ export default function LoginPage() {
       }
 
       const result = (await response.json()) as { redirectTo?: string };
-      window.location.assign(result.redirectTo || "/splash.html");
+      window.location.assign(result.redirectTo || "/splash?next=/chat");
     } catch {
       setError("Koneksi autentikasi gagal. Coba lagi.");
     } finally {

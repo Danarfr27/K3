@@ -40,7 +40,7 @@ export async function POST(request: NextRequest) {
 
   const response = NextResponse.json({
     ok: true,
-    redirectTo: "/splash.html?next=/chat",
+    redirectTo: "/splash?next=/chat",
   });
   response.cookies.set(AUTH_COOKIE, createSessionValue(), {
     httpOnly: true,
