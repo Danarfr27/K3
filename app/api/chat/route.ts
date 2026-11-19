@@ -986,6 +986,30 @@ export async function POST(req: NextRequest) {
     process.env.OPENROUTER_MODEL ||
     "gemma-4-31b-it";
 
+  // OpenRouter holds the FULL max_tokens against the account balance before
+  // streaming. Uncapped requests ask for the model maximum (up to 131072) and
+  // free-tier keys answer 402 "requires more credits" -> the UI showed
+  // "Signal lost while contacting the provider". Always cap it.
+  const OPENROUTER_MAX_TOKENS = Math.min(
+    Math.max(Number.parseInt(process.env.OPENROUTER_MAX_TOKENS || "", 10) || 1536, 256),
+    8192
+  );
+
+  // One dead / too-expensive model must never kill the whole chat: try the
+  // configured model first, then free fallbacks (zero cost, no credit check).
+  const MODEL_CHAIN: string[] = Array.from(
+    new Set(
+      [
+        OPENROUTER_MODEL,
+        ...(process.env.OPENROUTER_MODEL_FALLBACKS ||
+          "nvidia/nemotron-3.5-lightning:free,google/gemma-3-27b-it:free,meta-llama/llama-3.3-70b-instruct:free")
+          .split(",")
+          .map((m) => m.trim())
+          .filter(Boolean),
+      ].filter(Boolean)
+    )
+  );
+
   if (apiKeys.length > 0) {
     let messagesForProvider: ProviderMessage[] = [];
 
@@ -1043,7 +1067,10 @@ export async function POST(req: NextRequest) {
 
     let lastError: any = null;
 
-    for (let i = 0; i < apiKeys.length; i++) {
+    for (let mIdx = 0; mIdx < MODEL_CHAIN.length; mIdx++) {
+      const activeModel = MODEL_CHAIN[mIdx];
+
+      for (let i = 0; i < apiKeys.length; i++) {
       const key = apiKeys[i];
 
       try {
@@ -1059,16 +1086,30 @@ export async function POST(req: NextRequest) {
               "X-Title": process.env.SITE_TITLE || "FIRDHAN AI",
             },
             body: JSON.stringify({
-              model: OPENROUTER_MODEL,
+              model: activeModel,
               // Stream provider deltas so the UI can render the response live.
               stream: true,
               messages: messagesForProvider,
+              max_tokens: OPENROUTER_MAX_TOKENS,
+              temperature: 0.7,
             }),
           }
         );
 
         if (!response.ok) {
           const errorData = await response.json().catch(() => null);
+
+          // 402 is a credit/price problem: burning the other keys on the same
+          // model only wastes round trips. Jump to the next model.
+          if (response.status === 402) {
+            lastError = {
+              status: 402,
+              model: activeModel,
+              message:
+                errorData?.error?.message || "OpenRouter: insufficient credits",
+            };
+            break;
+          }
 
           const shouldRetry =
             response.status === 429 ||
@@ -1087,20 +1128,12 @@ export async function POST(req: NextRequest) {
             continue;
           }
 
-          return NextResponse.json(
-            {
-              error:
-                response.status === 402
-                  ? "OPENROUTER_BILLING_REQUIRED"
-                  : "Generation failed",
-              message:
-                response.status === 402
-                  ? "OpenRouter menolak permintaan karena akun tidak memiliki kredit aktif atau API key tidak dapat ditagihkan."
-                  : errorData?.error?.message || "OpenRouter request failed",
-              details: errorData,
-            },
-            { status: response.status }
-          );
+          lastError = {
+            status: response.status,
+            model: activeModel,
+            message: errorData?.error?.message || "OpenRouter request failed",
+          };
+          break;
         }
 
         if (!response.body) {
@@ -1115,6 +1148,8 @@ export async function POST(req: NextRequest) {
           async start(controller) {
             let buffer = "";
             let fullContent = "";
+            let reasoningChars = 0;
+            let finishReason = "";
 
             const processLine = (line: string) => {
               const trimmed = line.trim();
@@ -1124,7 +1159,13 @@ export async function POST(req: NextRequest) {
 
               try {
                 const json = JSON.parse(data);
-                const chunk = json?.choices?.[0]?.delta?.content;
+                const delta = json?.choices?.[0]?.delta;
+                const chunk = delta?.content;
+                if (typeof delta?.reasoning === "string" && delta.reasoning) {
+                  reasoningChars += delta.reasoning.length;
+                }
+                const finish = json?.choices?.[0]?.finish_reason;
+                if (typeof finish === "string" && finish) finishReason = finish;
                 if (typeof chunk === "string" && chunk) {
                   const next = appendStreamText(fullContent, chunk);
                   const emitted = next.slice(fullContent.length);
@@ -1149,8 +1190,25 @@ export async function POST(req: NextRequest) {
               if (buffer.trim()) processLine(buffer);
             } catch (error) {
               logger.error("chat", "OpenRouter stream read failed", error);
-              controller.enqueue(encoder.encode("\n\n[K3 CONNECTION INTERRUPTED]"));
+              controller.enqueue(
+                encoder.encode(
+                  `\n\n[K3 CONNECTION INTERRUPTED] ${
+                    error instanceof Error ? error.message : "upstream stream read failed"
+                  }`
+                )
+              );
             } finally {
+              if (!fullContent.trim()) {
+                const notice =
+                  reasoningChars > 0
+                    ? `[K3] Model ${activeModel} hanya mengirim reasoning (${reasoningChars} karakter, finish=${finishReason || "?"}) tanpa jawaban. Naikkan OPENROUTER_MAX_TOKENS atau pakai model non-reasoning.`
+                    : `[K3] Provider ${activeModel} selesai tanpa mengirim teks. Coba kirim ulang.`;
+                try {
+                  controller.enqueue(encoder.encode(notice));
+                } catch {
+                  /* stream already closed */
+                }
+              }
               const cleanContent = repairRepeatedTokens(fullContent);
               if (conversationId && cleanContent.trim()) {
                 const assistantMessage = makeMessage({
@@ -1179,6 +1237,7 @@ export async function POST(req: NextRequest) {
           "Cache-Control": "no-cache, no-store, must-revalidate",
           Connection: "keep-alive",
           "X-Provider": "openrouter",
+          "X-K3-Model": activeModel,
         });
 
         if (conversationId) {
@@ -1206,11 +1265,22 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    }
+
+    const chainNote = MODEL_CHAIN.join(", ");
+
     return NextResponse.json(
       {
-        error: "Generation failed",
+        error:
+          lastError?.status === 402
+            ? "OPENROUTER_BILLING_REQUIRED"
+            : "Generation failed",
         message:
-          lastError?.message || "All API keys failed.",
+          lastError?.status === 402
+            ? `Kredit OpenRouter tidak cukup untuk model ${lastError?.model || OPENROUTER_MODEL} (max_tokens ${OPENROUTER_MAX_TOKENS}). Set OPENROUTER_MODEL=nvidia/nemotron-3.5-lightning:free atau turunkan OPENROUTER_MAX_TOKENS. Detail: ${lastError?.message}`
+            : `${lastError?.message || "All API keys failed."} (model dicoba: ${chainNote})`,
+        triedModels: MODEL_CHAIN,
+        details: lastError,
       },
       { status: lastError?.status || 500 }
     );

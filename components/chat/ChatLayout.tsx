@@ -399,7 +399,21 @@ export default function ChatLayout() {
           }),
         });
 
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        if (!res.ok) {
+          // Surface the real provider error instead of a generic
+          // "Signal lost while contacting the provider".
+          let serverMessage = `HTTP ${res.status}`;
+          try {
+            const payload = await res.clone().json();
+            serverMessage =
+              (typeof payload?.message === "string" && payload.message) ||
+              (typeof payload?.error === "string" && payload.error) ||
+              serverMessage;
+          } catch {
+            /* error body was not JSON */
+          }
+          throw new Error(serverMessage);
+        }
 
         const newConvoId = res.headers.get("X-Conversation-Id");
         const assistantId = res.headers.get("X-Assistant-Message-Id");
@@ -460,22 +474,27 @@ export default function ChatLayout() {
         }
         setOnline(true);
         void refreshConversations();
-      } catch {
+      } catch (error) {
         setOnline(false);
-        markError(assistantMsg.id);
+        markError(
+          assistantMsg.id,
+          error instanceof Error ? error.message : undefined
+        );
       } finally {
         setStreaming(false);
         setThinking(false);
       }
 
-      function markError(id: string) {
+      function markError(id: string, detail?: string) {
         setMessages((prev) => {
           const next = [...prev];
           const idx = next.findIndex((m) => m.id === id);
           if (idx >= 0) {
             next[idx] = {
               ...next[idx],
-              content: next[idx].content || "Signal lost while contacting the provider.",
+              content:
+                next[idx].content ||
+                `K3 CONNECTION INTERRUPTED — ${detail || "provider tidak mengirim respons (cek OPENROUTER_API_KEYS / model / kredit)."}`,
               error: true,
             };
           }
