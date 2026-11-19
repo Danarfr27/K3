@@ -996,6 +996,11 @@ export async function POST(req: NextRequest) {
 
   // One dead / too-expensive model must never kill the whole chat: try the
   // configured model first, then free fallbacks (zero cost, no credit check).
+  // OPENROUTER_MODEL_STRICT=1 -> never fall back to another model.
+  // Useful when a fallback model ignores the configured persona: it is
+  // better to surface the 429 than to answer with a different model.
+  const STRICT_MODEL = /^(1|true|yes)$/i.test(process.env.OPENROUTER_MODEL_STRICT || "");
+
   const MODEL_CHAIN: string[] = Array.from(
     new Set(
       [
@@ -1007,7 +1012,11 @@ export async function POST(req: NextRequest) {
           .filter(Boolean),
       ].filter(Boolean)
     )
-  );
+  ).filter((model, index) => index === 0 || !STRICT_MODEL);
+
+  // Which model answered which attempt — exposed as X-K3-Attempts so a
+  // silent fallback can never be mistaken for the configured model.
+  const attempts: string[] = [];
 
   if (apiKeys.length > 0) {
     let messagesForProvider: ProviderMessage[] = [];
@@ -1100,6 +1109,8 @@ export async function POST(req: NextRequest) {
 
           // 402 is a credit/price problem: burning the other keys on the same
           // model only wastes round trips. Jump to the next model.
+          attempts.push(`${activeModel}:${response.status}`);
+
           if (response.status === 402) {
             lastError = {
               status: 402,
@@ -1237,6 +1248,7 @@ export async function POST(req: NextRequest) {
           Connection: "keep-alive",
           "X-Provider": "openrouter",
           "X-K3-Model": activeModel,
+          "X-K3-Attempts": attempts.join(",") || `${activeModel}:200`,
         });
 
         if (conversationId) {
@@ -1279,6 +1291,8 @@ export async function POST(req: NextRequest) {
             ? `Kredit OpenRouter tidak cukup untuk model ${lastError?.model || OPENROUTER_MODEL} (max_tokens ${OPENROUTER_MAX_TOKENS}). Set OPENROUTER_MODEL=nvidia/nemotron-3.5-lightning:free atau turunkan OPENROUTER_MAX_TOKENS. Detail: ${lastError?.message}`
             : `${lastError?.message || "All API keys failed."} (model dicoba: ${chainNote})`,
         triedModels: MODEL_CHAIN,
+        attempts,
+        strictModel: STRICT_MODEL,
         details: lastError,
       },
       { status: lastError?.status || 500 }
