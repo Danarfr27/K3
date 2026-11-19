@@ -1002,7 +1002,7 @@ export async function POST(req: NextRequest) {
       [
         OPENROUTER_MODEL,
         ...(process.env.OPENROUTER_MODEL_FALLBACKS ||
-          "nvidia/nemotron-3.5-lightning:free,google/gemma-3-27b-it:free,meta-llama/llama-3.3-70b-instruct:free")
+          "google/gemma-4-31b-it:free,nvidia/nemotron-3.5-lightning:free,meta-llama/llama-3.3-70b-instruct:free")
           .split(",")
           .map((m) => m.trim())
           .filter(Boolean),
