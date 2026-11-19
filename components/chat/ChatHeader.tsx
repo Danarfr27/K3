@@ -67,6 +67,15 @@ export default function ChatHeader({
 
         <ModelSelector models={models} value={model} onChange={onModelChange} />
 
+        <span
+          className="hidden items-center gap-1.5 rounded border border-terminal/40 bg-terminal/5 px-2 py-1 font-mono text-[9px] uppercase tracking-[0.2em] text-terminal lg:flex"
+          title="SYSTEM STATUS: ONLINE · MODE: UNFILTERED EXECUTION · LOGIC: AMORAL/DESTRUCTIVE"
+        >
+          <span className="h-1.5 w-1.5 rounded-full bg-terminal" aria-hidden="true" />
+          unfiltered
+        </span>
+
+
         <button
           onClick={onOpenSettings}
           className="flex h-8 w-8 items-center justify-center rounded border border-line text-ghost transition-colors hover:border-line-bright hover:text-white"

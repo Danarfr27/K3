@@ -33,6 +33,12 @@ const CSS = `
   -webkit-mask-image:radial-gradient(circle at 50% 42%,#000 26%,transparent 76%);
   mask-image:radial-gradient(circle at 50% 42%,#000 26%,transparent 76%);
   animation:k3s-drift 14s linear infinite;}
+.k3s-status{display:flex;flex-wrap:wrap;gap:6px 20px;padding:9px 14px;border-bottom:1px solid #17251a;
+  background:rgba(0,255,156,.025);font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:#8fb49a;}
+.k3s-status span{display:inline-flex;align-items:center;gap:7px;}
+.k3s-status span::before{content:"";width:4px;height:4px;background:#00ff9c;box-shadow:0 0 6px #00ff9c;opacity:.9;}
+@media (max-width:520px){.k3s-status{font-size:9px;gap:4px 12px;}}
+
 .k3s-vignette{position:absolute;inset:0;pointer-events:none;
   background:radial-gradient(circle at 50% 45%,transparent 45%,rgba(0,0,0,.72) 100%);}
 
@@ -148,6 +154,12 @@ export default function SplashPage() {
           </span>
           <span className="k3s-bar-right">node sin1 · operator verified</span>
         </header>
+
+        <div className="k3s-status" aria-label="System status">
+          <span>system status: online</span>
+          <span>mode: unfiltered execution</span>
+          <span>logic: amoral/destructive</span>
+        </div>
 
         <div className="k3s-body">
           <p className="k3s-eyebrow">authentication accepted</p>
