@@ -160,7 +160,7 @@ export function getProvider(): AIProvider {
   // Prefer OpenRouter if OPENROUTER_API_KEYS/OPENROUTER_API_KEY is set
   const orKeys = (process.env.OPENROUTER_API_KEYS || process.env.OPENROUTER_API_KEY || "").split(",").map(k => k.trim()).filter(Boolean);
   if (orKeys.length > 0) {
-    const model = process.env.OPENROUTER_MODEL || "gemma-4-31b-it";
+    const model = process.env.OPENROUTER_MODEL || "google/gemma-4-31b-it:free";
     logger.info("ai", `provider=openrouter model=${model}`);
     cached = new OpenRouterProvider(orKeys, model);
     return cached;

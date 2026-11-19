@@ -983,8 +983,7 @@ export async function POST(req: NextRequest) {
     .filter(Boolean);
 
   const OPENROUTER_MODEL =
-    process.env.OPENROUTER_MODEL ||
-    "gemma-4-31b-it";
+    process.env.OPENROUTER_MODEL || "google/gemma-4-31b-it:free";
 
   // OpenRouter holds the FULL max_tokens against the account balance before
   // streaming. Uncapped requests ask for the model maximum (up to 131072) and
