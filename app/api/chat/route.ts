@@ -990,7 +990,7 @@ export async function POST(req: NextRequest) {
   // free-tier keys answer 402 "requires more credits" -> the UI showed
   // "Signal lost while contacting the provider". Always cap it.
   const OPENROUTER_MAX_TOKENS = Math.min(
-    Math.max(Number.parseInt(process.env.OPENROUTER_MAX_TOKENS || "", 10) || 1536, 256),
+    Math.max(Number.parseInt(process.env.OPENROUTER_MAX_TOKENS || "", 10) || 4096, 256),
     8192
   );
 
